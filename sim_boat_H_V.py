@@ -64,29 +64,60 @@ def unproject_point(u, v, R, t, K, z_world):
     return Xw
 
 
-def make_camera_pose(t, dt, radius=50.0, height=30.0, angular_velocity=0.05):
-    """飞机（相机）在更高平面上绕圈飞行
+def make_camera_pose(t, dt, boat_position, radius=50.0, height=30.0, angular_velocity=0.05):
+    """飞机（相机）跟随船移动并围绕船旋转
     Args:
         t: 帧序号
         dt: 时间步长
-        radius: 绕圈半径
-        height: 飞行高度（z坐标）
+        boat_position: 船的位置 [x, y, z]
+        radius: 围绕船的旋转半径
+        height: 飞行高度（相对于船的z坐标）
         angular_velocity: 角速度
     """
-    # 相机在xy平面绕圈，z固定在高处
+    # 飞机围绕船旋转，同时跟随船移动
     time = t * dt
     angle = angular_velocity * time
     
-    # 相机位置（绕圈）
-    cam_x = radius * np.cos(angle)
-    cam_y = radius * np.sin(angle)
-    cam_z = height
+    # 在船的xy平面坐标系中，飞机围绕船旋转
+    # 旋转半径在xy平面上的投影
+    cam_offset_x = radius * np.cos(angle)
+    cam_offset_y = radius * np.sin(angle)
     
-    # 相机朝向目标（船）的方向
-    # 简化：相机始终朝向原点（或可以朝向船的位置）
-    # 这里使用简单的旋转矩阵，让相机朝向下方和前方
-    R = np.eye(3)  # 简化：保持相机坐标系与世界坐标系一致
-    # 可以添加更复杂的旋转，让相机朝向目标
+    # 飞机位置 = 船的位置 + 旋转偏移 + 高度偏移
+    cam_x = boat_position[0] + cam_offset_x
+    cam_y = boat_position[1] + cam_offset_y
+    cam_z = boat_position[2] + height  # 飞机在船的上方
+    
+    # 相机朝向船的方向
+    # 计算从相机到船的向量
+    cam_to_boat = boat_position - np.array([cam_x, cam_y, cam_z])
+    cam_to_boat_normalized = cam_to_boat / np.linalg.norm(cam_to_boat)
+    
+    # 构建相机坐标系
+    # z轴：指向船的方向（相机前方）
+    z_axis = -cam_to_boat_normalized  # 相机z轴指向船
+    
+    # x轴：在xy平面上的投影方向（右方）
+    if abs(z_axis[2]) > 0.9:
+        # 如果相机几乎垂直向下，使用世界坐标系的x轴
+        x_axis = np.array([1.0, 0.0, 0.0])
+    else:
+        # 否则使用z轴与[0,0,1]的叉积
+        world_up = np.array([0.0, 0.0, 1.0])
+        x_axis = np.cross(world_up, z_axis)
+        x_axis = x_axis / np.linalg.norm(x_axis)
+    
+    # y轴：z轴与x轴的叉积（上方）
+    y_axis = np.cross(z_axis, x_axis)
+    y_axis = y_axis / np.linalg.norm(y_axis)
+    
+    # 重新正交化x轴
+    x_axis = np.cross(y_axis, z_axis)
+    x_axis = x_axis / np.linalg.norm(x_axis)
+    
+    # 构建旋转矩阵（从世界坐标系到相机坐标系）
+    # 相机坐标系的三个轴在世界坐标系中的表示
+    R = np.array([x_axis, y_axis, z_axis]).T  # 转置，因为列向量是坐标轴
     
     T = np.array([cam_x, cam_y, cam_z])
     return R, T
@@ -143,7 +174,7 @@ def generate_observations(Xs, K, H, L, W, dt, camera_radius=50.0, camera_height=
     Rs, Ts = [], []
 
     for t, X in enumerate(Xs):
-        R, T = make_camera_pose(t, dt, camera_radius, camera_height, camera_angular_velocity)
+        R, T = make_camera_pose(t, dt, X, camera_radius, camera_height, camera_angular_velocity)
         (u, v), z = project_point(X, R, T, K)
 
         # 计算船在图像中的尺寸
@@ -402,7 +433,7 @@ def main():
     z_cam_est = np.linalg.norm(X0_init - T0)  # 估计的相机到目标的距离
     h_obs_0 = obs[0, 3]  # 第一帧的框高度
     H_init = h_obs_0 * z_cam_est / K[1, 1]  # H = h * z / K[1,1]
-    
+    H_init = -120.0
     # 速度的初值：从前几帧的位置差估计
     if T >= 3:
         # 从观测反推前3帧的位置（使用错误的高度）
@@ -423,6 +454,7 @@ def main():
     else:
         V_init_xy = np.array([0.0, 0.0])
     
+    V_init_xy = np.array([0.0, 0.0])
     print(f"初始估计:")
     print(f"  H = {H_init:.4f} m (真实值 = {H:.4f} m)")
     print(f"  速度 = [{V_init_xy[0]:.4f}, {V_init_xy[1]:.4f}] m/s")
@@ -571,33 +603,28 @@ def main():
     # 5. 可视化
     # ===============================
 
-    # 计算每一帧相对于第一帧的位置
-    X_gt_relative = X_gt - X_gt[0]  # GT相对位置
-    X_opt_relative = X_opt - X_opt[0]  # 优化后的相对位置
-    
     # 提取相机位置（Ts是平移向量，就是相机在世界坐标系中的位置）
     camera_positions = np.array(Ts)  # shape: (T, 3)
-    camera_relative = camera_positions - camera_positions[0]  # 相机相对位置
 
-    print(f"\n场景信息:")
-    print(f"  船在 z = {boat_z_plane:.1f} 平面上运动")
-    print(f"  飞机在 z = {camera_height:.1f} 高度绕圈飞行 (半径 = {camera_radius:.1f})")
-    print(f"  船尺寸: 长={L:.1f}m, 宽={W:.1f}m, 高={H:.1f}m")
+    print(f"\nScene Information:")
+    print(f"  Boat on z = {boat_z_plane:.1f} plane")
+    print(f"  Aircraft at z = {camera_height:.1f} height, orbiting radius = {camera_radius:.1f}")
+    print(f"  Boat dimensions: L={L:.1f}m, W={W:.1f}m, H={H:.1f}m")
 
-    fig = plt.figure(figsize=(16, 10))
+    fig = plt.figure(figsize=(18, 6))
 
     # 1. 3D轨迹图
-    ax1 = fig.add_subplot(2, 3, 1, projection='3d')
-    ax1.plot(X_gt[:, 0], X_gt[:, 1], X_gt[:, 2], 'g-', label="GT 船", linewidth=2)
-    ax1.plot(X_opt[:, 0], X_opt[:, 1], X_opt[:, 2], 'r--', label="优化 船", linewidth=2)
+    ax1 = fig.add_subplot(1, 3, 1, projection='3d')
+    ax1.plot(X_gt[:, 0], X_gt[:, 1], X_gt[:, 2], 'g-', label="GT Boat", linewidth=2)
+    ax1.plot(X_opt[:, 0], X_opt[:, 1], X_opt[:, 2], 'r--', label="Optimized Boat", linewidth=2)
     ax1.plot(camera_positions[:, 0], camera_positions[:, 1], camera_positions[:, 2], 
-             'b-', label="飞机", linewidth=2, alpha=0.7)
-    ax1.scatter(X_gt[0, 0], X_gt[0, 1], X_gt[0, 2], c='green', s=100, marker='o', label='船起点')
-    ax1.scatter(X_gt[-1, 0], X_gt[-1, 1], X_gt[-1, 2], c='darkgreen', s=100, marker='s', label='船终点')
+             'b-', label="Aircraft", linewidth=2, alpha=0.7)
+    ax1.scatter(X_gt[0, 0], X_gt[0, 1], X_gt[0, 2], c='green', s=100, marker='o', label='Boat Start')
+    ax1.scatter(X_gt[-1, 0], X_gt[-1, 1], X_gt[-1, 2], c='darkgreen', s=100, marker='s', label='Boat End')
     ax1.scatter(camera_positions[0, 0], camera_positions[0, 1], camera_positions[0, 2], 
-                c='blue', s=100, marker='^', label='飞机起点')
+                c='blue', s=100, marker='^', label='Aircraft Start')
     ax1.scatter(camera_positions[-1, 0], camera_positions[-1, 1], camera_positions[-1, 2], 
-                c='darkblue', s=100, marker='v', label='飞机终点')
+                c='darkblue', s=100, marker='v', label='Aircraft End')
     # 绘制一些相机到目标的连线（每10帧）
     for t in range(0, T, 10):
         ax1.plot([camera_positions[t, 0], X_gt[t, 0]], 
@@ -607,17 +634,17 @@ def main():
     ax1.set_xlabel("X (m)")
     ax1.set_ylabel("Y (m)")
     ax1.set_zlabel("Z (m)")
-    ax1.set_title("3D轨迹 (船在z=0平面, 飞机在z=30高度绕圈)")
+    ax1.set_title("3D Trajectory")
     ax1.legend(fontsize=8)
     # 添加z平面参考线
-    ax1.plot([-100, 100], [0, 0], [boat_z_plane, boat_z_plane], 'k--', alpha=0.3, linewidth=1, label='船平面')
-    ax1.plot([0, 0], [-100, 100], [boat_z_plane, boat_z_plane], 'k--', alpha=0.3, linewidth=1)
+    ax1.plot([-200, 200], [0, 0], [boat_z_plane, boat_z_plane], 'k--', alpha=0.3, linewidth=1)
+    ax1.plot([0, 0], [-200, 200], [boat_z_plane, boat_z_plane], 'k--', alpha=0.3, linewidth=1)
 
     # 2. XZ平面视图（俯视图）
-    ax2 = fig.add_subplot(2, 3, 2)
-    ax2.plot(X_gt[:, 0], X_gt[:, 2], 'g-', label="GT Target", linewidth=2)
-    ax2.plot(X_opt[:, 0], X_opt[:, 2], 'r--', label="Optimized Target", linewidth=2)
-    ax2.plot(camera_positions[:, 0], camera_positions[:, 2], 'b-', label="Camera", linewidth=2, alpha=0.7)
+    ax2 = fig.add_subplot(1, 3, 2)
+    ax2.plot(X_gt[:, 0], X_gt[:, 2], 'g-', label="GT Boat", linewidth=2)
+    ax2.plot(X_opt[:, 0], X_opt[:, 2], 'r--', label="Optimized Boat", linewidth=2)
+    ax2.plot(camera_positions[:, 0], camera_positions[:, 2], 'b-', label="Aircraft", linewidth=2, alpha=0.7)
     # 绘制每一帧的点
     ax2.scatter(X_gt[::5, 0], X_gt[::5, 2], c='green', s=30, alpha=0.6, marker='o')
     ax2.scatter(X_opt[::5, 0], X_opt[::5, 2], c='red', s=30, alpha=0.6, marker='x')
@@ -627,17 +654,17 @@ def main():
         ax2.plot([camera_positions[t, 0], X_gt[t, 0]], 
                  [camera_positions[t, 2], X_gt[t, 2]], 
                  'k--', alpha=0.2, linewidth=0.5)
-    ax2.set_xlabel("X")
-    ax2.set_ylabel("Z")
-    ax2.set_title("Top View (XZ) - Target & Camera")
+    ax2.set_xlabel("X (m)")
+    ax2.set_ylabel("Z (m)")
+    ax2.set_title("Top View (XZ)")
     ax2.legend()
     ax2.grid(True, alpha=0.3)
 
     # 3. XY平面视图（前视图）
-    ax3 = fig.add_subplot(2, 3, 3)
-    ax3.plot(X_gt[:, 0], X_gt[:, 1], 'g-', label="GT Target", linewidth=2)
-    ax3.plot(X_opt[:, 0], X_opt[:, 1], 'r--', label="Optimized Target", linewidth=2)
-    ax3.plot(camera_positions[:, 0], camera_positions[:, 1], 'b-', label="Camera", linewidth=2, alpha=0.7)
+    ax3 = fig.add_subplot(1, 3, 3)
+    ax3.plot(X_gt[:, 0], X_gt[:, 1], 'g-', label="GT Boat", linewidth=2)
+    ax3.plot(X_opt[:, 0], X_opt[:, 1], 'r--', label="Optimized Boat", linewidth=2)
+    ax3.plot(camera_positions[:, 0], camera_positions[:, 1], 'b-', label="Aircraft", linewidth=2, alpha=0.7)
     ax3.scatter(X_gt[::5, 0], X_gt[::5, 1], c='green', s=30, alpha=0.6, marker='o')
     ax3.scatter(X_opt[::5, 0], X_opt[::5, 1], c='red', s=30, alpha=0.6, marker='x')
     ax3.scatter(camera_positions[::5, 0], camera_positions[::5, 1], c='blue', s=30, alpha=0.6, marker='^')
@@ -646,65 +673,11 @@ def main():
         ax3.plot([camera_positions[t, 0], X_gt[t, 0]], 
                  [camera_positions[t, 1], X_gt[t, 1]], 
                  'k--', alpha=0.2, linewidth=0.5)
-    ax3.set_xlabel("X")
-    ax3.set_ylabel("Y")
-    ax3.set_title("Front View (XY) - Target & Camera")
+    ax3.set_xlabel("X (m)")
+    ax3.set_ylabel("Y (m)")
+    ax3.set_title("Front View (XY)")
     ax3.legend()
     ax3.grid(True, alpha=0.3)
-
-    # 4. 相对位置 - XZ平面
-    ax4 = fig.add_subplot(2, 3, 4)
-    ax4.plot(X_gt_relative[:, 0], X_gt_relative[:, 2], 'g-', label="GT Target Relative", linewidth=2)
-    ax4.plot(X_opt_relative[:, 0], X_opt_relative[:, 2], 'r--', label="Optimized Target Relative", linewidth=2)
-    ax4.plot(camera_relative[:, 0], camera_relative[:, 2], 'b-', label="Camera Relative", linewidth=2, alpha=0.7)
-    # 绘制每一帧的相对位置点
-    for t in range(0, T, 5):
-        ax4.scatter(X_gt_relative[t, 0], X_gt_relative[t, 2], c='green', s=50, alpha=0.7, marker='o')
-        ax4.scatter(X_opt_relative[t, 0], X_opt_relative[t, 2], c='red', s=50, alpha=0.7, marker='x')
-        ax4.scatter(camera_relative[t, 0], camera_relative[t, 2], c='blue', s=50, alpha=0.7, marker='^')
-        # 标注帧号
-        if t % 10 == 0:
-            ax4.annotate(f't={t}', (X_gt_relative[t, 0], X_gt_relative[t, 2]), 
-                        fontsize=8, alpha=0.7)
-    ax4.set_xlabel("Relative X")
-    ax4.set_ylabel("Relative Z")
-    ax4.set_title("Relative Position (XZ) - 每一帧")
-    ax4.legend()
-    ax4.grid(True, alpha=0.3)
-
-    # 5. 相对位置 - XY平面
-    ax5 = fig.add_subplot(2, 3, 5)
-    ax5.plot(X_gt_relative[:, 0], X_gt_relative[:, 1], 'g-', label="GT Target Relative", linewidth=2)
-    ax5.plot(X_opt_relative[:, 0], X_opt_relative[:, 1], 'r--', label="Optimized Target Relative", linewidth=2)
-    ax5.plot(camera_relative[:, 0], camera_relative[:, 1], 'b-', label="Camera Relative", linewidth=2, alpha=0.7)
-    # 绘制每一帧的相对位置点
-    for t in range(0, T, 5):
-        ax5.scatter(X_gt_relative[t, 0], X_gt_relative[t, 1], c='green', s=50, alpha=0.7, marker='o')
-        ax5.scatter(X_opt_relative[t, 0], X_opt_relative[t, 1], c='red', s=50, alpha=0.7, marker='x')
-        ax5.scatter(camera_relative[t, 0], camera_relative[t, 1], c='blue', s=50, alpha=0.7, marker='^')
-        # 标注帧号
-        if t % 10 == 0:
-            ax5.annotate(f't={t}', (X_gt_relative[t, 0], X_gt_relative[t, 1]), 
-                        fontsize=8, alpha=0.7)
-    ax5.set_xlabel("Relative X")
-    ax5.set_ylabel("Relative Y")
-    ax5.set_title("Relative Position (XY) - 每一帧")
-    ax5.legend()
-    ax5.grid(True, alpha=0.3)
-
-    # 6. 深度随时间变化
-    ax6 = fig.add_subplot(2, 3, 6)
-    ax6.plot(X_gt[:, 2], 'g-', label="GT Target Z", linewidth=2)
-    ax6.plot(X_opt[:, 2], 'r--', label="Optimized Target Z", linewidth=2)
-    ax6.plot(camera_positions[:, 2], 'b-', label="Camera Z", linewidth=2, alpha=0.7)
-    ax6.scatter(range(0, T, 5), X_gt[::5, 2], c='green', s=30, alpha=0.6, marker='o')
-    ax6.scatter(range(0, T, 5), X_opt[::5, 2], c='red', s=30, alpha=0.6, marker='x')
-    ax6.scatter(range(0, T, 5), camera_positions[::5, 2], c='blue', s=30, alpha=0.6, marker='^')
-    ax6.set_xlabel("Frame")
-    ax6.set_ylabel("Depth (Z)")
-    ax6.set_title("Depth over Time (Target & Camera)")
-    ax6.legend()
-    ax6.grid(True, alpha=0.3)
 
     plt.tight_layout()
     plt.savefig("trajectory_result.png", dpi=150)
