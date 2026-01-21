@@ -2738,6 +2738,22 @@ wheels = [
 ]
 
 [[package]]
+name = "optimum"
+version = "1.26.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "huggingface-hub" },
+    { name = "numpy" },
+    { name = "packaging" },
+    { name = "torch" },
+    { name = "transformers" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9a/47/65ac84f69af8058d6bf6c6e10a3a1d7630aa8d79f9677227603e4aa1a36a/optimum-1.26.1.tar.gz", hash = "sha256:bc42f5f2394a395862d015af583120f5a076fd33ee3390d1f4e9db1ce47de5b8", size = 342586, upload-time = "2025-06-13T10:27:55.925Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b5/6a/60bf27f58b4fc3167e5eb70d2182e46b8a49ec08e2603b93cd115a76e490/optimum-1.26.1-py3-none-any.whl", hash = "sha256:dd8e1b9083e3098f9b1452c0e266aeef61ef6fa460175e2553da5749a1c7774b", size = 424619, upload-time = "2025-06-13T10:27:42.354Z" },
+]
+
+[[package]]
 name = "outlines-core"
 version = "0.2.11"
 source = { registry = "https://pypi.org/simple" }
@@ -4654,6 +4670,7 @@ dependencies = [
     { name = "matplotlib" },
     { name = "modelscope" },
     { name = "opencv-python" },
+    { name = "optimum" },
     { name = "scipy" },
     { name = "vllm" },
 ]
@@ -4664,6 +4681,7 @@ requires-dist = [
     { name = "matplotlib", specifier = ">=3.10.8" },
     { name = "modelscope", specifier = ">=1.34.0" },
     { name = "opencv-python", specifier = ">=4.13.0.90" },
+    { name = "optimum", specifier = "==1.26.1" },
     { name = "scipy", specifier = ">=1.17.0" },
     { name = "vllm", specifier = ">=0.14.0" },
 ]
