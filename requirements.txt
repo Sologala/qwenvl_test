@@ -1,0 +1,13 @@
+# 已有 demo 依赖
+torch
+tqdm
+Pillow
+modelscope
+
+# 爬取脚本额外依赖
+requests
+duckduckgo-search
+# 可选：使用 Bing 来源时安装
+bing-image-downloader
+# 百度图片爬取（BaiduImageCrawling 会拉取 fake_useragent）
+baidu_image_crawling
